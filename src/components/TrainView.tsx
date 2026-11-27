@@ -70,9 +70,13 @@ export const TrainView: React.FC<TrainViewProps> = ({
     cameraActive: false,
     cameraError: 'Camera unavailable',
     phase: 'DISARMED',
+    readyCountdownSec: 0,
+    activeMethod: 'CALIBRATING',
+    mediapipeReady: false,
+    faceBox: null,
     proximity: 0,
-    downThreshold: 0.58,
-    upThreshold: 0.25,
+    downThreshold: 0.55,
+    upThreshold: 0.24,
     baselineLuma: 120,
     centerLuma: 120,
     isDarkAmbient: false,
@@ -128,6 +132,7 @@ export const TrainView: React.FC<TrainViewProps> = ({
     if (stage === 'active') {
       if (orientation.isFlatLocked && !prevFlatRef.current) {
         soundEngine.playFlatLocked();
+        soundEngine.speak('Floor locked. Get into plank.');
       }
       const shouldArm = orientation.isFlatLocked && restRemaining === null;
       detectorRef.current?.setArmed(shouldArm);
@@ -259,6 +264,7 @@ export const TrainView: React.FC<TrainViewProps> = ({
 
       const detector = new FrontCameraPushUpDetector({
         onTelemetry: (t) => setTelemetry(t),
+        onReadyComplete: () => soundEngine.speak('Ready. Go!'),
         onBottomReached: () => soundEngine.playBottomDepth(),
         onRepCompleted: handleRepDetected,
       });
@@ -445,13 +451,24 @@ export const TrainView: React.FC<TrainViewProps> = ({
       ? !orientation.isFaceUp
         ? 'FLIP PHONE FACE-UP'
         : 'PLACE PHONE FLAT ON FLOOR'
-      : telemetry.phase === 'CALIBRATING'
-        ? 'CALIBRATING · HOLD PLANK'
-        : isBottom
-          ? 'DEPTH HIT · PUSH UP!'
-          : telemetry.phase === 'DESCENDING'
-            ? 'KEEP LOWERING...'
-            : 'READY · DESCEND OVER LENS';
+      : telemetry.phase === 'GET_READY'
+        ? `GET INTO PLANK · ${telemetry.readyCountdownSec}S`
+        : telemetry.phase === 'CALIBRATING'
+          ? 'ZEROING PLANK BASELINE...'
+          : isBottom
+            ? 'DEPTH HIT · PUSH UP!'
+            : telemetry.phase === 'DESCENDING'
+              ? 'KEEP LOWERING...'
+              : 'READY · DESCEND OVER LENS';
+
+    const activeMethodLabel =
+      telemetry.activeMethod === 'BLAZEFACE'
+        ? 'BLAZEFACE 3D SCALE'
+        : telemetry.activeMethod === 'LOOMING_FLOW'
+          ? 'RADIAL LOOMING FLOW'
+          : telemetry.activeMethod === 'OCCLUSION'
+            ? 'GAIN-INVARIANT OCCLUSION'
+            : 'PLANK CALIBRATION';
 
     return (
       <div id="active-workout-screen">
@@ -538,7 +555,7 @@ export const TrainView: React.FC<TrainViewProps> = ({
         ) : (
           <div className="armed-banner">
             <span style={{ color: 'var(--lime)', fontWeight: 700 }}>
-              ● Floor Lock Active
+              ● Floor Lock Active · {activeMethodLabel}
             </span>
             {orientation.manualFlatOverride ? (
               <button
@@ -550,7 +567,7 @@ export const TrainView: React.FC<TrainViewProps> = ({
               </button>
             ) : (
               <span className="mono-num" style={{ color: 'var(--text-secondary)', fontSize: '0.76rem' }}>
-                Tilt {orientation.tiltDeg.toFixed(1)}° · Armed
+                Tilt {orientation.tiltDeg.toFixed(1)}°
               </span>
             )}
           </div>
@@ -621,7 +638,9 @@ export const TrainView: React.FC<TrainViewProps> = ({
                 className={`big-rep-counter ${repPulse ? 'pulse' : ''}`}
                 id="live-rep-number"
               >
-                {setReps}
+                {telemetry.phase === 'GET_READY'
+                  ? `${telemetry.readyCountdownSec}`
+                  : setReps}
               </div>
 
               <div className="status-caps">{statusLine}</div>
@@ -633,11 +652,13 @@ export const TrainView: React.FC<TrainViewProps> = ({
                   marginTop: 8,
                 }}
               >
-                {selectedMode === 'max_test'
-                  ? 'Do as many clean unbroken push-ups as you can — tap Save when done'
-                  : selectedMode === 'program'
-                    ? `Target: ${currentSetTarget}${isLastProgramSet ? '+ (AMRAP)' : ''} reps`
-                    : `Target: ${currentSetTarget} reps`}
+                {telemetry.phase === 'GET_READY'
+                  ? 'Step into straight-arm plank over the phone before zeroing'
+                  : selectedMode === 'max_test'
+                    ? 'Do as many clean unbroken push-ups as you can — tap Save when done'
+                    : selectedMode === 'program'
+                      ? `Target: ${currentSetTarget}${isLastProgramSet ? '+ (AMRAP)' : ''} reps`
+                      : `Target: ${currentSetTarget} reps`}
               </div>
 
               <div className="proximity-bar-wrap">
@@ -650,7 +671,7 @@ export const TrainView: React.FC<TrainViewProps> = ({
                     color: 'var(--text-secondary)',
                   }}
                 >
-                  <span>PROXIMITY (OPTICAL SHADOW)</span>
+                  <span>DEPTH ({activeMethodLabel})</span>
                   <span>
                     {proxPct}% / {threshPct}% TARGET
                   </span>
@@ -733,7 +754,7 @@ export const TrainView: React.FC<TrainViewProps> = ({
               <button
                 type="button"
                 id="btn-zero-camera"
-                onClick={() => detectorRef.current?.recalibrate()}
+                onClick={() => detectorRef.current?.recalibrate(true)}
                 className="mono-num"
                 style={{ fontSize: '0.73rem', color: 'var(--lime)', fontWeight: 700 }}
               >
@@ -749,6 +770,20 @@ export const TrainView: React.FC<TrainViewProps> = ({
                 muted
                 style={{ display: telemetry.cameraActive ? 'block' : 'none' }}
               />
+              {telemetry.cameraActive && telemetry.faceBox && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: `${Math.max(0, (1 - telemetry.faceBox.x - telemetry.faceBox.w) * 100)}%`,
+                    top: `${telemetry.faceBox.y * 100}%`,
+                    width: `${telemetry.faceBox.w * 100}%`,
+                    height: `${telemetry.faceBox.h * 100}%`,
+                    border: '2px solid var(--lime)',
+                    borderRadius: 6,
+                    pointerEvents: 'none',
+                  }}
+                />
+              )}
               {!telemetry.cameraActive && (
                 <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.76rem' }}>
                   <div style={{ fontSize: '1.1rem', marginBottom: 3 }}>📷</div>
@@ -761,12 +796,15 @@ export const TrainView: React.FC<TrainViewProps> = ({
               className="mono-num"
               style={{
                 textAlign: 'center',
-                fontSize: '0.7rem',
-                color: 'var(--text-secondary)',
+                fontSize: '0.68rem',
+                color:
+                  telemetry.activeMethod === 'BLAZEFACE'
+                    ? 'var(--lime)'
+                    : 'var(--text-secondary)',
               }}
             >
               {telemetry.cameraActive
-                ? `LUMA ${telemetry.centerLuma} / BASE ${telemetry.baselineLuma}`
+                ? `${activeMethodLabel}`
                 : 'DEMO FALLBACK ACTIVE'}
             </div>
           </div>

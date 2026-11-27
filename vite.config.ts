@@ -44,7 +44,16 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
+        globIgnores: ['**/mediapipe/**'],
         runtimeCaching: [
+          {
+            urlPattern: /\/mediapipe\/.*\.(wasm|tflite|js)$/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'mediapipe-vision-assets',
+              expiration: { maxEntries: 10, maxAgeSeconds: 60 * 60 * 24 * 365 },
+            },
+          },
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
             handler: 'CacheFirst',
