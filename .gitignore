@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Copied MediaPipe WASM runtime (copied automatically from node_modules on dev/build)
+public/mediapipe/vision_wasm*
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

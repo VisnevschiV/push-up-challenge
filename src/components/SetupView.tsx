@@ -126,7 +126,7 @@ export const SetupView: React.FC<SetupViewProps> = ({
           <div>
             <div style={{ fontWeight: 700, fontSize: '0.94rem' }}>Camera Placement Mode</div>
             <div style={{ fontSize: '0.79rem', color: 'var(--text-secondary)', marginTop: 2 }}>
-              Hybrid fuses face framing + chest/close-range shadow
+              Auto-selects BlazeFace 3D scale, radial looming flow, or gain-invariant occlusion
             </div>
           </div>
           <div className="pill-segmented">

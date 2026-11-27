@@ -4,12 +4,16 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "sync-wasm": "node -e \"const fs=require('fs');fs.mkdirSync('public/mediapipe',{recursive:true});fs.cpSync('node_modules/@mediapipe/tasks-vision/wasm','public/mediapipe',{recursive:true});\"",
+    "predev": "npm run sync-wasm",
     "dev": "vite",
+    "prebuild": "npm run sync-wasm",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@mediapipe/tasks-vision": "^1.2.3",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },
