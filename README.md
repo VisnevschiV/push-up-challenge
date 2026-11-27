@@ -1,22 +1,22 @@
-# FloorRep — Camera Push-Up Challenge PWA
+# Pushups — Floor Sensor + Front Camera Trainer PWA
 
-Hands-free push-up counter & 30-day progressive push-up challenge built as an installable offline-capable **Progressive Web App (PWA)**.
+Hands-free push-up counter and adaptive 5-set progression trainer built as an installable offline-capable **Progressive Web App (PWA)**.
 
-## How It Works
+## Features
 
-1. **Ground-Level & Face-Up Check (`GroundOrientationMonitor`)**
-   - Uses `DeviceOrientationEvent` (`beta` / `gamma` tilt angles) with iOS 13+ permission handling to verify the phone is **screen-up** (`|β| < 90°`) and **flat on the floor** (`hypot(β, γ) ≤ 12°` for 600 ms).
-   - Automatically disarms counting the instant you tilt/pick up the phone (`> 17°`), preventing false reps at the end of a set.
-   - Includes a one-tap **Flat Test Mode** bypass for laptop/desktop browser testing without gyroscope hardware.
+1. **Step 1: Baseline Max Test & Adaptive 5-Set Progression**
+   - Starts by testing your unbroken push-up max (or accepting a known baseline) and sets a clear milestone goal (`25` / `40` / `60` / `100` unbroken reps).
+   - Prescribes structured 5-set wave workouts (`60% · 76% · 58% · 58% · 72%+`, e.g., `3 · 4 · 3 · 3 · 4+` for a max of `5`) with hands-free between-set rest timers and spoken audio announcements.
+   - Automatically scales working capacity after each completed workout across a **30-Day Schedule** (`23` training days + active recovery `REST` every 4th day).
 
-2. **Near-Field Front-Camera Vision Detector (`FrontCameraPushUpDetector`)**
-   - Processes `64×48` front-camera (`facingMode: 'user'`) frames at ~30 FPS completely on-device (no cloud uploads or external ML weights required—works 100% offline).
-   - Fuses **relative center-ROI luminance occlusion**, **shadow pixel coverage**, and **near-field spatial gradient defocus** against a drift-compensated upper-plank baseline.
-   - Automatically switches to **Dark-Room Screen Fill-Light** mode when ambient light is low, illuminating your chest from the phone screen to detect proximity day or night.
-   - Hysteresis state machine (`UP → DESCENDING → BOTTOM → UP`) with minimum dwell & cadence filtering + synthesized Web Audio chimes, haptic pulses, and `Screen Wake Lock`.
+2. **Flat-Floor & Face-Up Sensor Gate (`GroundOrientationMonitor`)**
+   - Uses `DeviceOrientationEvent` (`beta` / `gamma` tilt angles, with iOS 13+ permission support) to verify the phone is screen-up and flat on the floor before arming the camera.
+   - Immediately disarms rep detection when you pick up or tilt the phone at the end of a set.
+   - Includes a one-tap **Sim Floor** fallback for desktop testing without IMU sensors.
 
-3. **30-Day Push-Up Challenge**
-   - Four built-in programs (*30-Day Progressive 25→100*, *100/Day Centurion*, *Foundation 15→60*, and *Custom Daily Quota*) persisted locally with JSON backup export.
+3. **Front-Camera Optical Proximity Engine (`FrontCameraPushUpDetector`)**
+   - Processes `64×48` front-camera (`facingMode: 'user'`) frames on-device at ~30 FPS (100% offline, no cloud uploads).
+   - Supports **Hybrid (`Both`)**, **`Face`**, and **`Chest`** placement modes plus **`Easy` / `Normal` / `Strict`** depth thresholds, synthesized chimes, and a **Spoken Rep Counter** (`SpeechSynthesis`).
 
 ## Local Development
 
@@ -25,7 +25,6 @@ npm install
 npm run dev
 ```
 
-## Using on Your Phone (HTTPS Required)
+## Deploying to Your Phone (HTTPS)
 
-Mobile browsers require **HTTPS** for camera (`getUserMedia`) and gyroscope (`DeviceOrientationEvent`) access:
-- Push/merge to `main` and enable **Settings → Pages → Source: GitHub Actions** to serve over `https://<user>.github.io/push-up-challenge/`, then install via **Add to Home Screen**.
+Mobile browsers require **HTTPS** for camera (`getUserMedia`) and orientation (`DeviceOrientationEvent`) access. Once merged to `main`, enable **Settings → Pages → Source: GitHub Actions** in GitHub to publish via `.github/workflows/deploy.yml`, then open the URL on your phone and choose **Add to Home Screen**.
