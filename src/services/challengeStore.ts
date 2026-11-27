@@ -1,34 +1,47 @@
-export type ChallengePlanId = 'progressive30' | 'beast100' | 'builder60' | 'custom';
-export type WorkoutMode = 'daily' | 'amrap60' | 'free';
-export type SensitivityPreset = 'strict' | 'standard' | 'relaxed';
+export type SessionMode = 'program' | 'daily' | 'max_test';
+export type CameraPlacementMode = 'both' | 'face' | 'chest';
+export type DepthRequirement = 'easy' | 'normal' | 'strict';
+
+export interface PrescribedWorkout {
+  dayNumber: number; // 1..30
+  isRestDay: boolean;
+  sets: number[]; // e.g. [3, 4, 3, 3, 4]
+  totalMinReps: number; // sum of sets
+  restSeconds: number; // rest between sets
+  label: string; // e.g. "3 · 4 · 3 · 3 · 4+"
+}
 
 export interface PushUpSession {
   id: string;
-  timestamp: string; // ISO string
-  dateKey: string; // YYYY-MM-DD local
+  timestamp: string;
+  dateKey: string; // YYYY-MM-DD
   reps: number;
+  setsCompleted?: number[];
   durationSec: number;
-  mode: WorkoutMode | 'manual';
-  avgDepthPct: number;
+  mode: SessionMode | 'manual';
+  programDay?: number;
 }
 
 export interface UserSettings {
+  dailyGoal: number;
+  placementMode: CameraPlacementMode;
+  depthRequirement: DepthRequirement;
+  flatToleranceDeg: 8 | 12 | 18;
   soundEnabled: boolean;
-  hapticsEnabled: boolean;
+  spokenEnabled: boolean;
   screenTorchInDark: boolean;
-  sensitivity: SensitivityPreset;
-  flatToleranceDeg: number; // Default 12 deg
 }
 
 export interface ChallengeState {
-  planId: ChallengePlanId;
-  customDailyGoal: number;
-  startDateKey: string; // YYYY-MM-DD
+  baselineMax: number | null; // null until user runs initial Max Test or sets baseline
+  trainingCapacity: number; // dynamic working max capacity adjusted by performance
+  activeProgramDay: number; // 1..30 current position in 30-day program
+  completedProgramDays: number[]; // list of completed day numbers (1..30)
   sessions: PushUpSession[];
   settings: UserSettings;
 }
 
-const STORAGE_KEY = 'floorrep_challenge_state_v1';
+const STORAGE_KEY = 'pushups_pwa_state_v2';
 
 export function toLocalDateKey(date: Date = new Date()): string {
   const y = date.getFullYear();
@@ -44,66 +57,167 @@ export function addDaysToKey(dateKey: string, days: number): string {
   return toLocalDateKey(dt);
 }
 
-export function diffDaysBetweenKeys(startKey: string, endKey: string): number {
-  const [y1, m1, d1] = startKey.split('-').map(Number);
-  const [y2, m2, d2] = endKey.split('-').map(Number);
-  const t1 = Date.UTC(y1, m1 - 1, d1);
-  const t2 = Date.UTC(y2, m2 - 1, d2);
-  return Math.floor((t2 - t1) / (1000 * 60 * 60 * 24));
+/**
+ * Computes a clear, motivating unbroken push-up milestone goal from the user's starting baseline max.
+ */
+export function getMilestoneGoal(baselineMax: number | null, bestPR: number): number {
+  const ref = Math.max(baselineMax ?? 0, bestPR);
+  if (ref === 0) return 25;
+  if (ref < 10) return 25;
+  if (ref < 20) return 40;
+  if (ref < 35) return 60;
+  if (ref < 55) return 80;
+  if (ref < 100) return 100;
+  return Math.ceil((ref + 25) / 25) * 25;
 }
 
-export const CHALLENGE_PLANS: Record<
-  ChallengePlanId,
-  { name: string; tagline: string; getTargetForDay: (dayIndex1Based: number, customGoal: number) => number }
-> = {
-  progressive30: {
-    name: '30-Day Progressive',
-    tagline: '25 → 100 reps/day with active taper every 4th day',
-    getTargetForDay: (day) => {
-      const clamped = Math.max(1, Math.min(30, day));
-      if (clamped === 30) return 100;
-      const base = Math.round(25 + ((clamped - 1) / 29) * 75);
-      // Every 4th day is a 70% active recovery volume day
-      if (clamped % 4 === 0) {
-        return Math.round((base * 0.7) / 5) * 5;
-      }
-      return Math.round(base / 5) * 5;
-    },
-  },
-  beast100: {
-    name: '100 / Day Centurion',
-    tagline: '100 clean push-ups every day for 30 days (3,000 total)',
-    getTargetForDay: () => 100,
-  },
-  builder60: {
-    name: 'Foundation 15 → 60',
-    tagline: 'Steady strength ramp from 15 to 60 daily push-ups',
-    getTargetForDay: (day) => {
-      const clamped = Math.max(1, Math.min(30, day));
-      if (clamped === 30) return 60;
-      const raw = 15 + ((clamped - 1) / 29) * 45;
-      return clamped % 5 === 0 ? Math.max(15, Math.round((raw * 0.75) / 5) * 5) : Math.round(raw / 5) * 5;
-    },
-  },
-  custom: {
-    name: 'Custom Daily Target',
-    tagline: 'Fixed daily push-up quota tailored to your routine',
-    getTargetForDay: (_day, customGoal) => Math.max(5, customGoal),
-  },
-};
+/**
+ * Generates a 5-set wave progression workout (e.g. 3 · 4 · 3 · 3 · 4+ for capacity=5)
+ * tailored to an effective unbroken push-up capacity.
+ */
+export function prescribeSetsFromCapacity(rawCapacity: number): {
+  sets: number[];
+  restSeconds: number;
+} {
+  const c = Math.max(2, rawCapacity);
+
+  if (c < 3) {
+    return { sets: [1, 2, 1, 1, 2], restSeconds: 45 };
+  }
+  if (c < 4) {
+    return { sets: [2, 2, 2, 1, 2], restSeconds: 45 };
+  }
+
+  // Wave structure: Warm-in (60%), Peak early set (76%), Density 1 (58%), Density 2 (58%), Final AMRAP+ (72%)
+  // At c = 5 -> [3, 4, 3, 3, 4] -> "3 · 4 · 3 · 3 · 4+" (17+ total reps)
+  const s1 = Math.max(2, Math.round(c * 0.6));
+  const s2 = Math.max(2, Math.round(c * 0.76));
+  const s3 = Math.max(2, Math.round(c * 0.58));
+  const s4 = Math.max(2, Math.round(c * 0.58));
+  const s5 = Math.max(2, Math.round(c * 0.72));
+
+  const restSeconds = c <= 10 ? 45 : c <= 25 ? 60 : 75;
+  return { sets: [s1, s2, s3, s4, s5], restSeconds };
+}
+
+export function formatSetsLabel(sets: number[], plusOnLast = true): string {
+  return sets
+    .map((n, idx) => (plusOnLast && idx === sets.length - 1 ? `${n}+` : String(n)))
+    .join(' · ');
+}
+
+/**
+ * Generates the full 30-day structured program schedule anchored on the user's current trainingCapacity
+ * and activeProgramDay. Every 4th day (D4, D8, D12, D16, D20, D24, D28) is an active recovery REST day.
+ */
+export function build30DayProgram(state: ChallengeState): PrescribedWorkout[] {
+  const baseCap = state.baselineMax !== null ? state.trainingCapacity : 8;
+  const anchorDay = Math.max(1, state.activeProgramDay);
+
+  // Count training sessions up to each day to scale progressive overload smoothly
+  let trainingIndex = 0;
+  const trainingIndexByDay: number[] = [];
+  for (let d = 1; d <= 30; d++) {
+    const isRest = d % 4 === 0;
+    if (!isRest) trainingIndex++;
+    trainingIndexByDay[d] = trainingIndex;
+  }
+
+  const anchorTrainIdx = Math.max(1, trainingIndexByDay[anchorDay] || 1);
+
+  const schedule: PrescribedWorkout[] = [];
+  for (let d = 1; d <= 30; d++) {
+    const isRestDay = d % 4 === 0;
+    if (isRestDay) {
+      schedule.push({
+        dayNumber: d,
+        isRestDay: true,
+        sets: [],
+        totalMinReps: 0,
+        restSeconds: 0,
+        label: 'REST',
+      });
+      continue;
+    }
+
+    const tIdx = trainingIndexByDay[d];
+    const deltaSessions = tIdx - anchorTrainIdx;
+    // Progressive overload curve: ~4.5% compounding + 0.35 linear floor per workout session
+    const projectedCap = Math.max(
+      2,
+      baseCap * Math.pow(1.042, deltaSessions) + deltaSessions * 0.35
+    );
+    const { sets, restSeconds } = prescribeSetsFromCapacity(projectedCap);
+    const totalMinReps = sets.reduce((a, b) => a + b, 0);
+
+    schedule.push({
+      dayNumber: d,
+      isRestDay: false,
+      sets,
+      totalMinReps,
+      restSeconds,
+      label: formatSetsLabel(sets, true),
+    });
+  }
+
+  return schedule;
+}
+
+/**
+ * Closed-loop adaptive update after finishing a 5-set guided program workout.
+ */
+export function evaluateProgramProgression(
+  currentCapacity: number,
+  prescribedSets: number[],
+  actualSets: number[]
+): { nextCapacity: number; advancedDay: boolean; feedback: string } {
+  const targetTotal = prescribedSets.reduce((a, b) => a + b, 0);
+  const actualTotal = actualSets.reduce((a, b) => a + b, 0);
+  const lastTarget = prescribedSets[prescribedSets.length - 1] ?? 1;
+  const lastActual = actualSets[actualSets.length - 1] ?? 0;
+
+  if (actualTotal >= targetTotal && lastActual >= lastTarget + 2) {
+    const boost = Math.max(1.2, currentCapacity * 0.09);
+    return {
+      nextCapacity: Number((currentCapacity + boost).toFixed(2)),
+      advancedDay: true,
+      feedback: `Strong finish (+${lastActual - lastTarget} bonus reps on final set) — next workout scaled up!`,
+    };
+  }
+
+  if (actualTotal >= Math.ceil(targetTotal * 0.9)) {
+    const step = Math.max(0.65, currentCapacity * 0.05);
+    return {
+      nextCapacity: Number((currentCapacity + step).toFixed(2)),
+      advancedDay: true,
+      feedback: 'All sets locked in! Advancing to the next training day.',
+    };
+  }
+
+  // Consolidated session if <90% of prescribed volume completed
+  const slightTrim = actualTotal < targetTotal * 0.6 ? Math.max(2, currentCapacity * 0.95) : currentCapacity;
+  return {
+    nextCapacity: Number(slightTrim.toFixed(2)),
+    advancedDay: false,
+    feedback: 'Good volume logged — keeping this level for your next workout so you crush every set.',
+  };
+}
 
 export function createDefaultState(): ChallengeState {
   return {
-    planId: 'progressive30',
-    customDailyGoal: 50,
-    startDateKey: toLocalDateKey(),
+    baselineMax: null,
+    trainingCapacity: 8,
+    activeProgramDay: 1,
+    completedProgramDays: [],
     sessions: [],
     settings: {
-      soundEnabled: true,
-      hapticsEnabled: true,
-      screenTorchInDark: true,
-      sensitivity: 'standard',
+      dailyGoal: 50,
+      placementMode: 'both',
+      depthRequirement: 'normal',
       flatToleranceDeg: 12,
+      soundEnabled: true,
+      spokenEnabled: true,
+      screenTorchInDark: true,
     },
   };
 }
@@ -121,6 +235,9 @@ export function loadChallengeState(): ChallengeState {
         ...defaults.settings,
         ...(parsed.settings ?? {}),
       },
+      completedProgramDays: Array.isArray(parsed.completedProgramDays)
+        ? parsed.completedProgramDays
+        : [],
       sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
     };
   } catch {
@@ -132,57 +249,62 @@ export function saveChallengeState(state: ChallengeState): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
-    // Ignore storage quota issues
+    // Ignore storage quota errors
   }
 }
 
 export function getDailyTotalsMap(sessions: PushUpSession[]): Record<string, number> {
-  const totals: Record<string, number> = {};
+  const map: Record<string, number> = {};
   for (const s of sessions) {
-    totals[s.dateKey] = (totals[s.dateKey] ?? 0) + s.reps;
+    map[s.dateKey] = (map[s.dateKey] ?? 0) + s.reps;
   }
-  return totals;
+  return map;
 }
 
-export function getTodayChallengeInfo(state: ChallengeState, todayKey: string = toLocalDateKey()) {
-  const dayOffset = diffDaysBetweenKeys(state.startDateKey, todayKey);
-  const currentDayNumber = Math.max(1, Math.min(30, dayOffset + 1));
-  const plan = CHALLENGE_PLANS[state.planId];
-  const todayTarget = plan.getTargetForDay(currentDayNumber, state.customDailyGoal);
+export function computeDashboardMetrics(state: ChallengeState, todayKey: string = toLocalDateKey()) {
   const dailyTotals = getDailyTotalsMap(state.sessions);
   const todayReps = dailyTotals[todayKey] ?? 0;
-  const remaining = Math.max(0, todayTarget - todayReps);
-  const progressPct = Math.min(100, Math.round((todayReps / Math.max(1, todayTarget)) * 100));
+  const dailyGoal = state.settings.dailyGoal;
+  const remainingToday = Math.max(0, dailyGoal - todayReps);
+  const todayPct = Math.min(100, Math.round((todayReps / Math.max(1, dailyGoal)) * 100));
 
-  // Compute current streak (consecutive days meeting target up to today or yesterday)
+  const totalLifetimeReps = state.sessions.reduce((acc, s) => acc + s.reps, 0);
+  const bestSessionSet = state.sessions.reduce((max, s) => {
+    const bestInSets = s.setsCompleted && s.setsCompleted.length > 0 ? Math.max(...s.setsCompleted) : s.reps;
+    return Math.max(max, bestInSets);
+  }, state.baselineMax ?? 0);
+
+  // Active daily streak (days with >= dailyGoal OR a completed program workout)
+  const programDates = new Set(
+    state.sessions.filter((s) => s.mode === 'program' || s.mode === 'max_test').map((s) => s.dateKey)
+  );
   let streak = 0;
   for (let i = 0; i < 365; i++) {
-    const checkKey = addDaysToKey(todayKey, -i);
-    const dIdx = Math.max(1, Math.min(30, diffDaysBetweenKeys(state.startDateKey, checkKey) + 1));
-    const target = plan.getTargetForDay(dIdx, state.customDailyGoal);
-    const done = dailyTotals[checkKey] ?? 0;
-    if (done >= target) {
+    const key = addDaysToKey(todayKey, -i);
+    const hitDaily = (dailyTotals[key] ?? 0) >= dailyGoal || programDates.has(key);
+    if (hitDaily) {
       streak++;
     } else if (i === 0) {
-      // Today still in progress; check yesterday onwards
       continue;
     } else {
       break;
     }
   }
 
-  const totalLifetimeReps = state.sessions.reduce((sum, s) => sum + s.reps, 0);
-  const bestSingleSet = state.sessions.reduce((max, s) => Math.max(max, s.reps), 0);
+  const milestoneGoal = getMilestoneGoal(state.baselineMax, bestSessionSet);
+  const estimatedMax =
+    state.baselineMax !== null ? Math.max(bestSessionSet, Math.round(state.trainingCapacity)) : 0;
 
   return {
-    currentDayNumber,
-    todayTarget,
     todayReps,
-    remaining,
-    progressPct,
-    streak,
+    dailyGoal,
+    remainingToday,
+    todayPct,
     totalLifetimeReps,
-    bestSingleSet,
+    bestSetPR: bestSessionSet,
+    estimatedMax,
+    milestoneGoal,
+    streak,
     dailyTotals,
   };
 }

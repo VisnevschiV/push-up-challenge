@@ -8,14 +8,20 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png'],
+      includeAssets: [
+        'favicon.svg',
+        'logo-96.png',
+        'apple-touch-icon.png',
+        'pwa-192x192.png',
+        'pwa-512x512.png',
+      ],
       manifest: {
-        name: 'FloorRep — Camera Push-Up Challenge',
-        short_name: 'FloorRep',
+        name: 'Pushups',
+        short_name: 'Pushups',
         description:
-          'Place your phone face-up on the floor to verify level ground placement and count push-ups hands-free with the front camera.',
-        theme_color: '#111312',
-        background_color: '#111312',
+          'Hands-free front-camera push-up counter & adaptive multi-set progression trainer.',
+        theme_color: '#0b0d0e',
+        background_color: '#0b0d0e',
         display: 'standalone',
         orientation: 'portrait',
         start_url: './',
